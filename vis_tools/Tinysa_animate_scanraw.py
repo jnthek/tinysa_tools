@@ -7,7 +7,7 @@ from time import sleep
 from struct import *
 
 def get_tinysa_scanraw(f_low, f_high, N_points, RBW):
-    ser = serial.Serial(port='/dev/cu.usbmodem4001', baudrate=115200)
+    ser = serial.Serial(port='/dev/ttyACM0', baudrate=115200)
     ser.timeout = 100
     ser.flushInput()
     ser.flushOutput()
