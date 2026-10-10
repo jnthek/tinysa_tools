@@ -6,8 +6,10 @@ import serial
 from time import sleep
 from struct import *
 import argparse
+import h5py 
+import time
 
-def get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW):
+def get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW, dump_data, h5_file):
     ser = serial.Serial(port=s_port, baudrate=115200)
     ser.timeout = 100 #Large timeout to enable high N sweeps, extremely buggy !
     ser.flushInput()
@@ -36,6 +38,16 @@ def get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW):
     for i in range(N_points):
         m_power[i] = (read_data[i*3+1] + read_data[i*3+2]*256)/32-128
     ser.close() 
+
+    if dump_data:
+        with h5py.File(h5_file, "a") as hf:
+            data_group = hf['data']
+            len_old_data = data_group['timestamps'].shape[0]
+            hf['data/timestamps'].resize((len_old_data + 1), axis=0)
+            hf['data/timestamps'][-1] = time.time()
+
+            hf['data/radio'].resize((len_old_data + 1), axis=0)
+            hf['data/radio'][-1:] = np.array(m_power)
     return m_power
 
 parser = argparse.ArgumentParser(description='A simple TinySA Spectrum Display tool, written by VK6JN/VU3VWB')
@@ -43,6 +55,8 @@ parser.add_argument('-s', metavar='serial_port', help='Serial port name, for exa
 parser.add_argument('-f', metavar='frequency', help='Frequency in Hz format is f_low:f_high:RBW, for example 87e6:108e6:100e3')
 parser.add_argument('-N', metavar='N_pnts', type=int, help='Number of spectral points to sweep')
 parser.add_argument('-T', metavar='N_ts', type=int, help='Depth of the waterfall, i.e. number of timestamps. 100 is a reasonable number')
+parser.add_argument('-D', metavar='SaveFile', type=bool, default=False, help='Dumps the data as HDF5')
+
 args = parser.parse_args()
 
 s_port = str(args.s)
@@ -55,9 +69,33 @@ RBW = float(f_string[2])
 N_points = int(args.N)
 N_tstamps = int(args.T)
 
+dump_data = bool(args.D)
+
+if dump_data:
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+    h5_file = str(timestr)+"_tinysa.h5"
+    print ("Writing to",h5_file)
+    hf = h5py.File(h5_file, 'w')
+
+    data_group = hf.create_group('data')
+    data_group.attrs["f_low"] = f_low
+    data_group.attrs["f_high"] = f_high
+    data_group.attrs["RBW"] = RBW
+    data_group.attrs["N_points"] = N_points
+
+    timestamp = time.time()
+    dummy_data = np.zeros(N_points, dtype=np.float32)
+
+    data_group.create_dataset('timestamps', data=np.array([timestamp]), maxshape=(None,))
+    data_group.create_dataset('radio', data=np.array([dummy_data]), maxshape=(None,None))
+    hf.close()
+else :
+    h5_file = "Dummy"
+
+
 wfall_buffer = np.zeros([N_tstamps,N_points])
 freq = np.linspace(f_low, f_high, N_points)
-meas_power = get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW)
+meas_power = get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW, dump_data, h5_file)
 
 fig, [ax_spec, ax_wfall] = plt.subplots(2, 1, figsize=(16,9))
 fig.suptitle("Freq low : {:.2f} MHz".format(f_low/1e6)+", Freq high : {:.2f} MHz".format(f_high/1e6)+ \
@@ -82,7 +120,7 @@ def animate_func(i):
     global wfall_buffer, set_lims, baseline_min_power, baseline_max_power
     wfall_buffer = np.roll(wfall_buffer, shift=1, axis=0)
     freq = np.linspace(f_low, f_high, N_points)
-    meas_power = get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW)
+    meas_power = get_tinysa_scanraw(s_port, f_low, f_high, N_points, RBW, dump_data, h5_file)
 
     if np.min(meas_power)<(baseline_min_power-10) or np.max(meas_power)>baseline_max_power+10:
         set_lims = True
@@ -99,7 +137,7 @@ def animate_func(i):
 
     return [im]
 
-anim = animation.FuncAnimation(fig, animate_func, frames = None)
+anim = animation.FuncAnimation(fig, animate_func, frames = None, cache_frame_data=False)
                                
 plt.show() 
 
